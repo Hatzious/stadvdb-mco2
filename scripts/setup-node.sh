@@ -19,7 +19,8 @@ apt-get install -y \
     curl \
     wget \
     git \
-    postgresql
+    postgresql \
+    openssh-server
 
 # Add future setup steps below this line.
 

@@ -49,3 +49,26 @@ cd stadvdb-mco2
 git pull
 sudo bash scripts/setup-node.sh
 ```
+### Running SSH
+
+Enable SSH
+```bash
+sudo systemctl enable --now ssh
+```
+
+### Connect from personal PC (Ask me for password)
+
+#### Hera
+```powershell
+ssh -p 20160 greateststrongestbbc@103.231.240.136
+```
+
+#### Artemis
+```powershell
+ssh -p 20161 greateststrongestbbc@103.231.240.136
+```
+
+#### Athena
+```powershell
+ssh -p 20162 greateststrongestbbc@103.231.240.136
+```
