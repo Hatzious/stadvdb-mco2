@@ -1,0 +1,1 @@
+https://blobs.duckdb.org/nl-railway/services-2021.csv.gz
