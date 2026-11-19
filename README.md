@@ -72,3 +72,40 @@ ssh -p 20161 greateststrongestbbc@103.231.240.136
 ```powershell
 ssh -p 20162 greateststrongestbbc@103.231.240.136
 ```
+
+## Loading the dataset
+
+Run these on the node as your regular user, from the repo folder (`cd ~/stadvdb-mco2`).
+The dataset is saved in `data/`, which git ignores, so it never gets committed.
+
+### 1. Download the dataset
+
+Downloads the file listed in [source.txt](source.txt) into `data/`. If the download gets cut off,
+running it again resumes where it stopped.
+
+```bash
+bash scripts/download-data.sh
+```
+
+### 2. Load it into PostgreSQL
+
+Creates the `railway` database and the `services` table (from [schema/services.sql](schema/services.sql))
+if they don't exist yet, then loads every row. It takes a few minutes; run it inside `tmux` so a dropped
+SSH connection doesn't stop it.
+
+```bash
+bash scripts/load-data.sh
+```
+
+If the table already has rows, the script loads only the rows that aren't there yet and skips the rest,
+so data never gets duplicated. Skipping needs a primary key on the table; without one, the script stops
+and loads nothing.
+
+### Wiping and reloading
+
+Empties the `services` table and loads the dataset into it again from scratch. It asks you to type
+`yes` first. The table definition (including any primary key) is kept; only the rows are deleted.
+
+```bash
+bash scripts/reload-data.sh
+```
