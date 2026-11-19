@@ -20,7 +20,8 @@ apt-get install -y \
     wget \
     git \
     postgresql \
-    openssh-server
+    openssh-server \
+    tmux
 
 # Add future setup steps below this line.
 
