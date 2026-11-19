@@ -109,3 +109,9 @@ Empties the `services` table and loads the dataset into it again from scratch. I
 ```bash
 bash scripts/reload-data.sh
 ```
+
+### Opening PSQL on terminal
+
+```bash
+sudo -u postgres psql -d railway
+```
