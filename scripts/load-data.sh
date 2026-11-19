@@ -2,10 +2,11 @@
 # Loads the downloaded dataset from data/ into the PostgreSQL "services" table.
 # Creates the database and the table (from schema/services.sql) if they don't exist yet.
 #
-# - Empty table:               loads every row directly (fastest).
-# - Table already has rows:    loads only the rows that aren't there yet, and skips the rest.
-#                              This needs a primary key on the table: without one, PostgreSQL
-#                              has no way to tell which rows "already exist".
+# How it loads, in two steps:
+#   1. The whole CSV (all 17 columns) goes into a temporary table, "incoming" (schema/incoming.sql).
+#   2. Only the 5 kept columns are copied into "services". Rows whose stop_rdt_id is already
+#      there are skipped, so running this twice never duplicates data.
+# The temporary table is deleted automatically at the end, but needs extra free disk space while it exists.
 #
 # Usage (on the node, as your regular user; it calls sudo itself):
 #   bash scripts/load-data.sh
@@ -18,6 +19,7 @@ TABLE="services"
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 SCHEMA_FILE="$REPO_DIR/schema/services.sql"
+INCOMING_FILE="$REPO_DIR/schema/incoming.sql"
 URL="$(head -n 1 "$REPO_DIR/source.txt" | tr -d '[:space:]')"
 FILE="$REPO_DIR/data/$(basename "$URL")"
 
@@ -50,31 +52,41 @@ else
     pg -d "$DB_NAME" < "$SCHEMA_FILE"
 fi
 
+# Stop early if the existing table is an older layout (e.g. the first 17-column version).
+COLUMNS="$(pg -d "$DB_NAME" -tAc "
+    SELECT string_agg(column_name, ',' ORDER BY column_name)
+    FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = '$TABLE'")"
+EXPECTED="service_company,service_type,stop_arrival_delay,stop_arrival_time,stop_rdt_id"
+if [ "$COLUMNS" != "$EXPECTED" ]; then
+    echo "Table '$TABLE' doesn't match schema/services.sql." >&2
+    echo "  It has:   $COLUMNS" >&2
+    echo "  Expected: $EXPECTED" >&2
+    echo "Drop it so this script can recreate it (this deletes its rows):" >&2
+    echo "  sudo -u postgres psql -d $DB_NAME -c \"DROP TABLE $TABLE;\"" >&2
+    exit 1
+fi
+
+HAS_KEY="$(pg -d "$DB_NAME" -tAc "
+    SELECT count(*) > 0 FROM pg_constraint
+    WHERE conrelid = 'public.$TABLE'::regclass AND contype = 'p'")"
+if [ "$HAS_KEY" != "t" ]; then
+    echo "Table '$TABLE' has no primary key, so already-loaded rows can't be detected and skipped." >&2
+    echo "Drop the table and run this script again to recreate it from schema/services.sql." >&2
+    exit 1
+fi
+
 ROWS_BEFORE="$(pg -d "$DB_NAME" -tAc "SELECT count(*) FROM $TABLE")"
 
-if [ "$ROWS_BEFORE" = "0" ]; then
-    echo "==> Table is empty: loading every row (this takes a few minutes)"
-    time (zcat "$FILE" | pg -d "$DB_NAME" -c "\copy $TABLE FROM STDIN WITH (FORMAT csv, HEADER true)")
-else
-    HAS_KEY="$(pg -d "$DB_NAME" -tAc "
-        SELECT count(*) > 0 FROM pg_constraint
-        WHERE conrelid = 'public.$TABLE'::regclass AND contype IN ('p', 'u')")"
-    if [ "$HAS_KEY" != "t" ]; then
-        echo "Table '$TABLE' already has $ROWS_BEFORE rows, but no primary key." >&2
-        echo "Without a key, PostgreSQL can't tell which rows already exist, so nothing was loaded." >&2
-        echo "Either add a primary key first, or wipe and reload:  bash scripts/reload-data.sh" >&2
-        exit 1
-    fi
-
-    echo "==> Table already has $ROWS_BEFORE rows: loading only the missing ones (this takes a few minutes)"
-    echo "    Rows go into a temporary copy first, so this needs extra free disk space for a while."
-    # All steps run as one transaction (-1): if anything fails, nothing is added.
-    # The temporary table disappears automatically when psql exits.
-    time (zcat "$FILE" | pg -1 -d "$DB_NAME" \
-        -c "CREATE TEMP TABLE incoming (LIKE $TABLE INCLUDING DEFAULTS)" \
-        -c "\copy incoming FROM pstdin WITH (FORMAT csv, HEADER true)" \
-        -c "INSERT INTO $TABLE SELECT * FROM incoming ON CONFLICT DO NOTHING")
-fi
+echo "==> Loading $FILE (this takes several minutes)"
+# All steps run as one transaction (-1): if anything fails, nothing is added.
+time (zcat "$FILE" | pg -1 -d "$DB_NAME" \
+    -c "$(cat "$INCOMING_FILE")" \
+    -c "\copy incoming FROM pstdin WITH (FORMAT csv, HEADER true)" \
+    -c "INSERT INTO $TABLE (stop_rdt_id, service_type, service_company, stop_arrival_time, stop_arrival_delay)
+        SELECT stop_rdt_id, service_type, service_company, stop_arrival_time, stop_arrival_delay
+        FROM incoming
+        ON CONFLICT (stop_rdt_id) DO NOTHING")
 
 ROWS_AFTER="$(pg -d "$DB_NAME" -tAc "SELECT count(*) FROM $TABLE")"
 echo "==> Rows before: $ROWS_BEFORE   rows after: $ROWS_AFTER   added: $((ROWS_AFTER - ROWS_BEFORE))"
@@ -85,7 +97,6 @@ pg -d "$DB_NAME" -c "ANALYZE $TABLE;"
 echo "==> Done. Summary:"
 pg -d "$DB_NAME" -c "
 SELECT count(*)                                         AS rows,
-       min(service_date)                                AS first_date,
-       max(service_date)                                AS last_date,
+       count(*) FILTER (WHERE service_type = 'Sprinter') AS sprinter_rows,
        pg_size_pretty(pg_total_relation_size('$TABLE')) AS table_size
 FROM $TABLE;"

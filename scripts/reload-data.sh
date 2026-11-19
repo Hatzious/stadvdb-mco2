@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Empties the "services" table (TRUNCATE) and loads the dataset into it again from scratch.
 # The table itself is kept, including any primary key or indexes you added; only the rows are deleted.
-# If schema/services.sql has changed, this does NOT apply the change: drop the table instead.
+# If schema/services.sql has changed, this does NOT apply the change: drop the table instead
+# (see "When schema/services.sql changes" in the README).
 #
 # Usage (on the node, as your regular user; it calls sudo itself):
 #   bash scripts/reload-data.sh          asks you to confirm first

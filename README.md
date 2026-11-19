@@ -90,16 +90,27 @@ bash scripts/download-data.sh
 ### 2. Load it into PostgreSQL
 
 Creates the `railway` database and the `services` table (from [schema/services.sql](schema/services.sql))
-if they don't exist yet, then loads every row. It takes a few minutes; run it inside `tmux` so a dropped
+if they don't exist yet, then loads the data. It takes several minutes; run it inside `tmux` so a dropped
 SSH connection doesn't stop it.
 
 ```bash
 bash scripts/load-data.sh
 ```
 
-If the table already has rows, the script loads only the rows that aren't there yet and skips the rest,
-so data never gets duplicated. Skipping needs a primary key on the table; without one, the script stops
-and loads nothing.
+The CSV has 17 columns, but `services` keeps only 5. The script loads the whole CSV into a temporary
+table first ([schema/incoming.sql](schema/incoming.sql)), copies the 5 kept columns into `services`,
+then deletes the temporary table. Rows whose `stop_rdt_id` is already in `services` are skipped,
+so running it twice never duplicates data.
+
+### When schema/services.sql changes
+
+The scripts never change an existing table. After editing the schema, drop the table on each node
+(this deletes its rows), then run the load script to recreate and fill it:
+
+```bash
+sudo -u postgres psql -d railway -c "DROP TABLE services;"
+bash scripts/load-data.sh
+```
 
 ### Wiping and reloading
 
