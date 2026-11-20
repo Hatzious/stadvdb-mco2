@@ -127,20 +127,117 @@ bash scripts/reload-data.sh
 sudo -u postgres psql -d railway
 ```
 
-### Getting Internal Address of Each Server
+## Network setup
+
+Lets the three servers' PostgreSQL databases talk to each other over the internal network, so the
+webapp on any server can read from and replicate to the others. Only these three servers are allowed
+in, and they must log in with a password. Run the steps on **every** server unless a step says otherwise.
+
+| Server | Container | Internal address | Holds |
+|---|---|---|---|
+| server 0 | Hera | `10.20.200.160` | All rows (central node) |
+| server 1 | Artemis | `10.20.200.161` | Sprinter rows |
+| server 2 | Athena | `10.20.200.162` | All other rows |
+
+The ports the university gave us (SSH, HTTP, MySQL) are for reaching the servers **from outside**
+through the gateway. Server-to-server traffic uses the internal addresses above and normal ports.
+
+To see a server's internal address:
 
 ```bash
 hostname -I
 ```
 
-### Ping to Test Communication
+### 1. Check the servers can reach each other
+
+`ping` doesn't work in these containers (they lack the permission it needs), so test a real port instead.
+This tries to connect to SSH (port 22) on another server and closes the connection immediately.
+Run it from each server against the other two:
 
 ```bash
-timeout 3 bash -c '</dev/tcp/<address>' && echo OPEN || echo CLOSED
+timeout 3 bash -c '</dev/tcp/10.20.200.161/22' && echo OPEN || echo CLOSED
 ```
 
-### Test Postgres port
+- `OPEN`: the servers can reach each other.
+- `CLOSED` immediately: reached the server, but nothing is listening on that port.
+- `CLOSED` after 3 seconds: nothing answered; something is blocking the traffic.
+
+### 2. Make PostgreSQL listen on the network
+
+By default PostgreSQL only accepts connections from inside its own server (`localhost`).
+This makes it listen on every address of the server. It is still only port 5432.
 
 ```bash
-pg_isready -h <address> -p 5432
+echo "listen_addresses = '*'" | sudo tee /etc/postgresql/16/main/conf.d/listen.conf
 ```
+
+PostgreSQL reads every file in `conf.d/` automatically. If `ls /etc/postgresql` shows a version
+other than `16`, use that number in the paths instead.
+
+### 3. Allow only the three servers to connect
+
+`pg_hba.conf` is PostgreSQL's list of who may connect, from where, and how they must log in.
+This appends one line per server: that exact address (`/32`), password login (`scram-sha-256`).
+
+```bash
+sudo tee -a /etc/postgresql/16/main/pg_hba.conf <<'EOF'
+
+# Project servers (server 0, 1, 2). Password login required.
+host  all  all  10.20.200.160/32  scram-sha-256
+host  all  all  10.20.200.161/32  scram-sha-256
+host  all  all  10.20.200.162/32  scram-sha-256
+EOF
+```
+
+> Keep the `-a`. Without it, `tee` replaces the whole file and the default local logins stop working.
+
+### 4. Restart PostgreSQL and check it's listening
+
+```bash
+sudo systemctl restart postgresql
+sudo ss -tlnp | grep 5432
+```
+
+You should see `0.0.0.0:5432` and `[::]:5432`. If you see `127.0.0.1:5432` instead, step 2 didn't
+take effect: check the file exists with `cat /etc/postgresql/16/main/conf.d/listen.conf`, then restart again.
+
+### 5. Test PostgreSQL from the other servers
+
+Run both from each server against the other two:
+
+```bash
+timeout 3 bash -c '</dev/tcp/10.20.200.160/5432' && echo OPEN || echo CLOSED
+pg_isready -h 10.20.200.160 -p 5432
+```
+
+`pg_isready` goes one step further than the port test: it checks that PostgreSQL itself is answering
+and ready. You want `accepting connections`.
+
+### 6. Create the `app` login
+
+The webapp and the replication between servers log in as `app`. Use the **same password on all three
+servers**, and share it privately, never in this repo. The `postgres` admin account stays local-only.
+
+```bash
+sudo -u postgres psql
+```
+
+```sql
+CREATE ROLE app WITH LOGIN;
+\password app
+\q
+```
+
+`\password` asks for the password twice and shows nothing as you type.
+
+Test it from another server; it should print the address of the server you logged in to:
+
+```bash
+psql -h 10.20.200.160 -U app -d postgres -c "SELECT inet_server_addr();"
+```
+
+- `password authentication failed`: wrong password, or a typo when it was set.
+- `no pg_hba.conf entry for host`: step 3 is missing on the server you're connecting **to**.
+
+`app` can log in but can't touch the data yet. Access to the `services` table is granted after the
+fragments are loaded.
