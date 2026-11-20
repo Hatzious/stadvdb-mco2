@@ -16,7 +16,8 @@ DB_NAME="railway"
 TABLE="services"
 CENTRAL_HOST="10.20.200.160"   # server 0
 APP_USER="app"
-COLUMNS="stop_rdt_id, service_type, service_company, stop_arrival_time, stop_arrival_delay"
+# Not named COLUMNS: bash uses that name for the terminal width and overwrites it.
+FIELDS="stop_rdt_id, service_type, service_company, stop_arrival_time, stop_arrival_delay"
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 SCHEMA_FILE="$REPO_DIR/schema/services.sql"
@@ -92,8 +93,8 @@ fi
 echo "==> Copying rows from server 0 (this takes a few minutes)"
 SECONDS=0
 # Server 0 streams out only this fragment's rows; the local server streams them in.
-if ! (central -c "\copy (SELECT $COLUMNS FROM $TABLE WHERE $WHERE) TO STDOUT" \
-      | pg -d "$DB_NAME" -c "\copy $TABLE ($COLUMNS) FROM STDIN"); then
+if ! (central -c "\copy (SELECT $FIELDS FROM $TABLE WHERE $WHERE) TO STDOUT" \
+      | pg -d "$DB_NAME" -c "\copy $TABLE ($FIELDS) FROM STDIN"); then
     echo "The copy failed. Emptying the table so no half-copied fragment is left behind." >&2
     pg -d "$DB_NAME" -c "TRUNCATE $TABLE;"
     exit 1

@@ -53,14 +53,14 @@ else
 fi
 
 # Stop early if the existing table is an older layout (e.g. the first 17-column version).
-COLUMNS="$(pg -d "$DB_NAME" -tAc "
+TABLE_COLUMNS="$(pg -d "$DB_NAME" -tAc "
     SELECT string_agg(column_name, ',' ORDER BY column_name)
     FROM information_schema.columns
     WHERE table_schema = 'public' AND table_name = '$TABLE'")"
 EXPECTED="service_company,service_type,stop_arrival_delay,stop_arrival_time,stop_rdt_id"
-if [ "$COLUMNS" != "$EXPECTED" ]; then
+if [ "$TABLE_COLUMNS" != "$EXPECTED" ]; then
     echo "Table '$TABLE' doesn't match schema/services.sql." >&2
-    echo "  It has:   $COLUMNS" >&2
+    echo "  It has:   $TABLE_COLUMNS" >&2
     echo "  Expected: $EXPECTED" >&2
     echo "Drop it so this script can recreate it (this deletes its rows):" >&2
     echo "  sudo -u postgres psql -d $DB_NAME -c \"DROP TABLE $TABLE;\"" >&2
