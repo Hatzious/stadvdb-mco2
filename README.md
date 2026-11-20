@@ -239,5 +239,60 @@ psql -h 10.20.200.160 -U app -d postgres -c "SELECT inet_server_addr();"
 - `password authentication failed`: wrong password, or a typo when it was set.
 - `no pg_hba.conf entry for host`: step 3 is missing on the server you're connecting **to**.
 
-`app` can log in but can't touch the data yet. Access to the `services` table is granted after the
-fragments are loaded.
+`app` can log in but can't touch the data yet. Access to the `services` table is granted in the next section.
+
+## Loading the fragments
+
+Server 0 holds every row. Servers 1 and 2 each copy their share **from server 0** over the network:
+
+| Server | Fragment | Rule |
+|---|---|---|
+| server 1 | `sprinter` | `service_type = 'Sprinter'` (~45% of rows) |
+| server 2 | `others` | `service_type IS DISTINCT FROM 'Sprinter'` (~55% of rows) |
+
+`IS DISTINCT FROM` (rather than `<>`) also catches rows with an empty type, so every row of server 0
+lands in exactly one fragment. Servers 1 and 2 don't need to download the dataset.
+
+### 1. Let `app` use the table on server 0 (server 0, once)
+
+Server 0's table was created before the `app` login existed, so grant access by hand. Tables created
+from [schema/services.sql](schema/services.sql) from now on get this automatically.
+
+```bash
+sudo -u postgres psql -d railway -c "GRANT SELECT, INSERT, UPDATE, DELETE ON services TO app;"
+```
+
+### 2. Copy the fragment (server 1 and server 2)
+
+Run inside `tmux`. It asks for your `sudo` password and for `app`'s password, then creates the
+`railway` database and `services` table if needed and copies the rows.
+
+On server 1:
+
+```bash
+bash scripts/load-fragment.sh sprinter
+```
+
+On server 2:
+
+```bash
+bash scripts/load-fragment.sh others
+```
+
+The script compares row counts with server 0 at the end. If the copy fails or the counts don't match,
+it empties the table so no half-copied fragment is left. To empty the table and copy again on purpose,
+add `--reset`:
+
+```bash
+bash scripts/load-fragment.sh sprinter --reset
+```
+
+### 3. Check the fragments add up
+
+The two fragments together must equal server 0. Compare these three numbers:
+
+```bash
+sudo -u postgres psql -d railway -c "SELECT count(*) FROM services;"
+```
+
+Run it on each server: server 1's count plus server 2's count should equal server 0's count.
