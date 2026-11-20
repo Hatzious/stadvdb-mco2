@@ -136,11 +136,11 @@ hostname -I
 ### Ping to Test Communication
 
 ```bash
-ping -c 3 <server-1-address>
+timeout 3 bash -c '</dev/tcp/<address>' && echo OPEN || echo CLOSED
 ```
 
 ### Test Postgres port
 
 ```bash
-pg_isready -h <server-0-address> -p 5432
+pg_isready -h <address> -p 5432
 ```
