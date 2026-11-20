@@ -126,3 +126,21 @@ bash scripts/reload-data.sh
 ```bash
 sudo -u postgres psql -d railway
 ```
+
+### Getting Internal Address of Each Server
+
+```bash
+hostname -I
+```
+
+### Ping to Test Communication
+
+```bash
+ping -c 3 <server-1-address>
+```
+
+### Test Postgres port
+
+```bash
+pg_isready -h <server-0-address> -p 5432
+```
