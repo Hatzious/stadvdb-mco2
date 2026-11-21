@@ -67,7 +67,21 @@ else
     exit 1
 fi
 
+# Work out which server this is from its internal address, to print its own public URL.
+GATEWAY="103.231.240.136"
+case " $(hostname -I) " in
+    *" 10.20.200.160 "*) SERVER_NAME="server 0"; HTTP_PORT=10160 ;;
+    *" 10.20.200.161 "*) SERVER_NAME="server 1"; HTTP_PORT=10161 ;;
+    *" 10.20.200.162 "*) SERVER_NAME="server 2"; HTTP_PORT=10162 ;;
+    *)                   SERVER_NAME="";         HTTP_PORT="" ;;
+esac
+
 echo
-echo "==> Deployed. Open this server's HTTP URL in your browser, e.g. http://103.231.240.136:10160"
+if [ -n "$HTTP_PORT" ]; then
+    echo "==> Deployed on $SERVER_NAME. Open:  http://$GATEWAY:$HTTP_PORT"
+else
+    echo "==> Deployed. This server's address isn't one of the three project servers,"
+    echo "    so its public URL is unknown. Check the README's server table."
+fi
 echo "    App log (live):  sudo journalctl -u $SERVICE_NAME -f"
 echo "    Restart app:     sudo bash scripts/deploy-app.sh   (restarts with these checks)"
