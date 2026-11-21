@@ -299,6 +299,19 @@ sudo -u postgres psql -d railway -c "SELECT count(*) FROM services;"
 
 Run it on each server: server 1's count plus server 2's count should equal server 0's count.
 
+## Python environment
+
+The webapp's packages are listed in [pyproject.toml](pyproject.toml), with exact versions locked in
+`uv.lock`; the Python version (3.12) is pinned in `.python-version`. Each machine (laptops and all
+three servers) installs them into its own `.venv` folder, which git ignores. After every `git pull`:
+
+```bash
+uv sync
+```
+
+To add a package, run `uv add <package>` on a laptop and commit `pyproject.toml` and `uv.lock`.
+Never edit `uv.lock` by hand.
+
 ## Development access (SSH tunnel)
 
 The databases are only reachable on the servers' internal network; the gateway doesn't forward port 5432.

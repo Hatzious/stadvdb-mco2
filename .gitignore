@@ -1,2 +1,9 @@
 # Downloaded datasets: too big for GitHub (100 MB file limit), and anyone can re-download them.
 data/
+
+# Python environment: specific to each machine, rebuilt with `uv sync`.
+.venv/
+__pycache__/
+
+# Streamlit settings with database addresses and passwords. Each machine keeps its own.
+.streamlit/secrets.toml
