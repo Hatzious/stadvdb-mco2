@@ -296,3 +296,38 @@ sudo -u postgres psql -d railway -c "SELECT count(*) FROM services;"
 ```
 
 Run it on each server: server 1's count plus server 2's count should equal server 0's count.
+
+## Development access (SSH tunnel)
+
+The databases are only reachable on the servers' internal network; the gateway doesn't forward port 5432.
+To use them from your laptop while developing, open an SSH tunnel through server 0. Run this in
+PowerShell on your laptop and leave the window open; the tunnel lasts only while it stays open.
+
+```powershell
+ssh -N -p 20160 -L 15430:10.20.200.160:5432 -L 15431:10.20.200.161:5432 -L 15432:10.20.200.162:5432 <username>@103.231.240.136
+```
+
+| On your laptop | Leads to |
+|---|---|
+| `localhost:15430` | server 0's PostgreSQL (`10.20.200.160:5432`) |
+| `localhost:15431` | server 1's PostgreSQL (`10.20.200.161:5432`) |
+| `localhost:15432` | server 2's PostgreSQL (`10.20.200.162:5432`) |
+
+- `-L laptop-port:target-address:target-port` opens `laptop-port` on your laptop. Anything that connects
+  to it travels inside the SSH connection, and server 0 passes it on to `target-address:target-port`.
+- `-N` means "tunnel only, no shell", so the window shows nothing after you log in. That's expected.
+  Leave out `-N` if you also want a shell on server 0 in the same window.
+- One SSH connection reaches all three databases, because server 0 can reach the others internally.
+  Servers 1 and 2 see the connection coming from server 0's address, which `pg_hba.conf` allows.
+- The 154xx ports are chosen so they don't clash with a PostgreSQL installed on your laptop (5432).
+
+Test it from a second PowerShell window (needs `psql` on your laptop), logging in as `app`:
+
+```powershell
+psql -h localhost -p 15431 -U app -d railway -c "SELECT inet_server_addr();"
+```
+
+It should print `10.20.200.161`: you're on server 1's database.
+
+The tunnel is for development only. The deployed app runs on the servers themselves and connects to
+the internal addresses directly.
