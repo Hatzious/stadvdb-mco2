@@ -4,6 +4,39 @@ A distributed database system running PostgreSQL across 3 Proxmox nodes, built o
 [Dutch railway services dataset](https://duckdb.org/docs/2.0/guides/snippets/dutch_railway_datasets).
 The data source URL is in [source.txt](source.txt).
 
+## Workflow: when the repo changes
+
+Changes flow one way: **laptop → GitHub → servers**. Edit and commit on a laptop, push, then update
+each server. Servers never commit or push.
+
+**On your laptop**, after committing:
+
+```powershell
+git push
+```
+
+**On each server** (server 0, 1 and 2), as your regular user:
+
+```bash
+cd ~/stadvdb-mco2
+git pull
+uv sync
+sudo systemctl restart stadvdb-app
+```
+
+- `git pull` fetches the new code.
+- `uv sync` installs any package changes from `uv.lock`. Harmless when nothing changed, so always run it.
+- `sudo systemctl restart stadvdb-app` restarts the webapp so it runs the new code. Always restart:
+  Streamlit doesn't reliably pick up every change on its own.
+
+Some changes need one extra step on each server:
+
+| If this changed | Also run |
+|---|---|
+| `scripts/setup-node.sh` | `sudo bash scripts/setup-node.sh` |
+| anything in `deploy/` | `sudo bash scripts/deploy-app.sh` (it also restarts the app, so the restart above can be skipped) |
+| `schema/services.sql` | See [When schema/services.sql changes](#when-schemaservicessql-changes) |
+
 ## Node setup
 
 Run these on each node's console (Proxmox web GUI → select the container → **Console**).
@@ -356,7 +389,7 @@ and checks that Streamlit and nginx both answer. Running it again redeploys. The
 Useful commands on a server:
 
 ```bash
-journalctl -u stadvdb-app -f            # app log, live (Ctrl+C to stop watching)
+sudo journalctl -u stadvdb-app -f       # app log, live (Ctrl+C to stop watching)
 sudo systemctl restart stadvdb-app      # restart after git pull / uv sync
 sudo systemctl status stadvdb-app       # is it running?
 ```

@@ -51,7 +51,8 @@ nginx -t
 systemctl reload nginx
 
 echo "==> Waiting for Streamlit to start"
-if curl -fsS --retry 15 --retry-delay 1 --retry-connrefused http://127.0.0.1:8501/_stcore/health > /dev/null; then
+# curl's own messages are hidden: the first tries normally fail while Streamlit is still starting.
+if curl -fsS --retry 15 --retry-delay 1 --retry-connrefused http://127.0.0.1:8501/_stcore/health > /dev/null 2>&1; then
     echo "    Streamlit is answering on 127.0.0.1:8501"
 else
     echo "Streamlit didn't start. Its log:  journalctl -u $SERVICE_NAME -n 50" >&2
@@ -68,5 +69,5 @@ fi
 
 echo
 echo "==> Deployed. Open this server's HTTP URL in your browser, e.g. http://103.231.240.136:10160"
-echo "    App log (live):  journalctl -u $SERVICE_NAME -f"
+echo "    App log (live):  sudo journalctl -u $SERVICE_NAME -f"
 echo "    Restart app:     sudo systemctl restart $SERVICE_NAME"
