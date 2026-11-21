@@ -345,6 +345,51 @@ uv sync
 To add a package, run `uv add <package>` on a laptop and commit `pyproject.toml` and `uv.lock`.
 Never edit `uv.lock` by hand.
 
+## Configuration
+
+Each machine (every laptop and each server) keeps its own settings in `.streamlit/secrets.toml`:
+the database password, where each server's database is, and which server this copy of the app is.
+Git ignores that file, so the password never reaches GitHub. Start from the committed template,
+[.streamlit/secrets.example.toml](.streamlit/secrets.example.toml).
+
+### On each server
+
+```bash
+cd ~/stadvdb-mco2
+cp .streamlit/secrets.example.toml .streamlit/secrets.toml
+chmod 600 .streamlit/secrets.toml
+nano .streamlit/secrets.toml
+```
+
+`chmod 600` makes the file readable by your user only. In the file, set:
+
+- `server_id`: `0` on server 0, `1` on server 1, `2` on server 2
+- `password`: the `app` password
+
+Leave the three server addresses as they are. Save with `Ctrl+O`, `Enter`, then exit with `Ctrl+X`,
+and run `sudo bash scripts/deploy-app.sh` so the app picks up the settings.
+
+### On a laptop
+
+```powershell
+Copy-Item .streamlit\secrets.example.toml .streamlit\secrets.toml
+```
+
+Open `.streamlit\secrets.toml` in your editor and set:
+
+- `server_id`: the server you want the app to act as while testing (`0`, `1` or `2`)
+- `password`: the `app` password
+- the three servers, to go through the [SSH tunnel](#development-access-ssh-tunnel):
+
+| Section | `host` | `port` |
+|---|---|---|
+| `[servers.0]` | `localhost` | `15430` |
+| `[servers.1]` | `localhost` | `15431` |
+| `[servers.2]` | `localhost` | `15432` |
+
+The laptop has no data of its own: through the tunnel, the app reads and writes the real databases on
+the servers. Test with demo rows, and tell your groupmates before running anything that changes data.
+
 ## Running the webapp
 
 The entry file is [app.py](app.py). Shared Streamlit settings are in
