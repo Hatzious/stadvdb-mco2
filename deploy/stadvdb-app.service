@@ -10,7 +10,7 @@ Wants=network-online.target
 [Service]
 User=__USER__
 WorkingDirectory=__REPO_DIR__
-ExecStart=__REPO_DIR__/.venv/bin/streamlit run app.py
+ExecStart=__REPO_DIR__/.venv/bin/streamlit run app/app.py
 Restart=on-failure
 RestartSec=3
 

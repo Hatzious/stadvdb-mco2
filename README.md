@@ -392,16 +392,23 @@ the servers. Test with demo rows, and tell your groupmates before running anythi
 
 ## Running the webapp
 
-The entry file is [app.py](app.py). Shared Streamlit settings are in
-[.streamlit/config.toml](.streamlit/config.toml).
+The webapp's code lives in the [app/](app) folder. The entry file is [app/app.py](app/app.py);
+[app/settings.py](app/settings.py) reads this machine's `.streamlit/secrets.toml`. Shared Streamlit
+settings are in [.streamlit/config.toml](.streamlit/config.toml).
+
+Right now the page is a **connection check**: it shows which server this copy of the app acts as, and
+whether it can reach all three databases. If `secrets.toml` is missing or wrong, it says what to fix.
 
 ### On a laptop (development)
 
+Open the [SSH tunnel](#development-access-ssh-tunnel) first, then from the repo folder:
+
 ```powershell
-uv run streamlit run app.py
+uv run streamlit run app/app.py
 ```
 
-Then open http://localhost:8501. Stop it with `Ctrl+C`.
+Then open http://localhost:8501. Stop it with `Ctrl+C`. Always start it from the repo folder, so
+Streamlit finds the `.streamlit/` settings.
 
 ### On a server (deployment)
 
