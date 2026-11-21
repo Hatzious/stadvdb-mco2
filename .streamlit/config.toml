@@ -1,0 +1,12 @@
+# Streamlit settings shared by every machine (laptops and servers).
+# Database addresses and passwords go in secrets.toml next to this file, which git ignores.
+
+[server]
+port = 8501
+# Only accept connections from this machine. On the servers, nginx (port 80) passes requests in.
+address = "127.0.0.1"
+# Don't try to open a browser window when started.
+headless = true
+
+[browser]
+gatherUsageStats = false

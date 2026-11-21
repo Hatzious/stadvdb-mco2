@@ -312,6 +312,55 @@ uv sync
 To add a package, run `uv add <package>` on a laptop and commit `pyproject.toml` and `uv.lock`.
 Never edit `uv.lock` by hand.
 
+## Running the webapp
+
+The entry file is [app.py](app.py). Shared Streamlit settings are in
+[.streamlit/config.toml](.streamlit/config.toml).
+
+### On a laptop (development)
+
+```powershell
+uv run streamlit run app.py
+```
+
+Then open http://localhost:8501. Stop it with `Ctrl+C`.
+
+### On a server (deployment)
+
+```
+browser -> 103.231.240.136:1016x (gateway) -> nginx on port 80 -> Streamlit on 127.0.0.1:8501
+```
+
+Streamlit only listens on `127.0.0.1`, so the only way in from outside is through nginx. It runs as a
+systemd service called `stadvdb-app` under your regular user, so it keeps running after you log out and
+starts again after a reboot.
+
+On each server, from the repo folder, as your regular user:
+
+```bash
+git pull
+uv sync
+sudo bash scripts/deploy-app.sh
+```
+
+The script installs the service ([deploy/stadvdb-app.service](deploy/stadvdb-app.service)) and the nginx
+site ([deploy/nginx-stadvdb.conf](deploy/nginx-stadvdb.conf)), removes nginx's default "Welcome" page,
+and checks that Streamlit and nginx both answer. Running it again redeploys. Then open:
+
+| Server | URL |
+|---|---|
+| server 0 | http://103.231.240.136:10160 |
+| server 1 | http://103.231.240.136:10161 |
+| server 2 | http://103.231.240.136:10162 |
+
+Useful commands on a server:
+
+```bash
+journalctl -u stadvdb-app -f            # app log, live (Ctrl+C to stop watching)
+sudo systemctl restart stadvdb-app      # restart after git pull / uv sync
+sudo systemctl status stadvdb-app       # is it running?
+```
+
 ## Development access (SSH tunnel)
 
 The databases are only reachable on the servers' internal network; the gateway doesn't forward port 5432.
