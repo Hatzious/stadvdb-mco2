@@ -21,20 +21,20 @@ git push
 cd ~/stadvdb-mco2
 git pull
 uv sync
-sudo systemctl restart stadvdb-app
+sudo bash scripts/deploy-app.sh
 ```
 
 - `git pull` fetches the new code.
 - `uv sync` installs any package changes from `uv.lock`. Harmless when nothing changed, so always run it.
-- `sudo systemctl restart stadvdb-app` restarts the webapp so it runs the new code. Always restart:
-  Streamlit doesn't reliably pick up every change on its own.
+- `sudo bash scripts/deploy-app.sh` reinstalls the server config from `deploy/`, restarts the webapp so it
+  runs the new code, and checks that Streamlit and nginx both answer. If a check fails, the update is
+  broken on that server: fix it before moving on.
 
 Some changes need one extra step on each server:
 
 | If this changed | Also run |
 |---|---|
 | `scripts/setup-node.sh` | `sudo bash scripts/setup-node.sh` |
-| anything in `deploy/` | `sudo bash scripts/deploy-app.sh` (it also restarts the app, so the restart above can be skipped) |
 | `schema/services.sql` | See [When schema/services.sql changes](#when-schemaservicessql-changes) |
 
 ## Node setup
@@ -390,9 +390,34 @@ Useful commands on a server:
 
 ```bash
 sudo journalctl -u stadvdb-app -f       # app log, live (Ctrl+C to stop watching)
-sudo systemctl restart stadvdb-app      # restart after git pull / uv sync
 sudo systemctl status stadvdb-app       # is it running?
 ```
+
+### Restarting the app
+
+The webapp runs as a systemd service called `stadvdb-app`, so it keeps running after you log out and
+starts by itself after a reboot. To restart it, always use the deploy script, so every restart ends with
+the health checks:
+
+```bash
+sudo bash scripts/deploy-app.sh
+```
+
+Restart it:
+
+- after `git pull` and `uv sync` (see [Workflow](#workflow-when-the-repo-changes))
+- after changing `.streamlit/secrets.toml` or `.streamlit/config.toml` on that server
+- if the page stops responding
+
+Other controls:
+
+| Command | What it does |
+|---|---|
+| `sudo systemctl stop stadvdb-app` | Turn the app off. It comes back after a reboot. |
+| `sudo systemctl start stadvdb-app` | Turn it back on |
+| `sudo systemctl disable --now stadvdb-app` | Turn it off and keep it off after reboots |
+| `sudo systemctl enable --now stadvdb-app` | Undo `disable`: on now and at every boot |
+| `sudo systemctl status stadvdb-app` | Is it running? Shows the last few log lines too |
 
 ## Development access (SSH tunnel)
 

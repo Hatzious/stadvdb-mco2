@@ -70,4 +70,4 @@ fi
 echo
 echo "==> Deployed. Open this server's HTTP URL in your browser, e.g. http://103.231.240.136:10160"
 echo "    App log (live):  sudo journalctl -u $SERVICE_NAME -f"
-echo "    Restart app:     sudo systemctl restart $SERVICE_NAME"
+echo "    Restart app:     sudo bash scripts/deploy-app.sh   (restarts with these checks)"
