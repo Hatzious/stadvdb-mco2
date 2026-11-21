@@ -34,7 +34,9 @@ cd stadvdb-mco2
 
 ### 4. Run the setup script
 
-Installs everything the node needs (curl, wget, git, PostgreSQL). It is safe to run more than once.
+Installs everything the node needs (curl, wget, git, PostgreSQL, SSH server, tmux, nginx) and uv,
+then prints the version of each. It is safe to run more than once. Run it with `sudo` from your regular
+user, not as root: uv installs per user, and the script installs it for whoever ran `sudo`.
 
 ```bash
 sudo bash scripts/setup-node.sh
