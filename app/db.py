@@ -142,6 +142,10 @@ def connect(settings: Settings, server_id: int, on_event: EventHandler | None = 
             password=settings.db_password,
             connect_timeout=settings.connect_timeout,
             autocommit=True,
+            # Read and send text as UTF-8. The load scripts create the databases as UTF8,
+            # so this changes nothing there; on an old SQL_ASCII database it stops psycopg from returning
+            # text as raw bytes.
+            client_encoding="UTF8",
             # Shows up in pg_stat_activity, so the Node monitor can tell which app copy a connection came from.
             application_name=f"stadvdb-app (from server {settings.server_id})",
             **_DEAD_SERVER_OPTIONS,

@@ -65,10 +65,20 @@ SOURCE_ROWS="$(central -tAc "SELECT count(*) FROM $TABLE WHERE $WHERE")"
 echo "    Server 0 has $SOURCE_ROWS rows for the '$1' fragment"
 
 if pg -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = '$DB_NAME'" | grep -q 1; then
-    echo "==> Database '$DB_NAME' already exists"
+    # An old database may use SQL_ASCII ("no encoding"), which makes the app receive text as raw bytes.
+    ENCODING="$(pg -d postgres -tAc "SELECT pg_encoding_to_char(encoding) FROM pg_database WHERE datname = '$DB_NAME'")"
+    if [ "$ENCODING" != "UTF8" ]; then
+        echo "Database '$DB_NAME' uses encoding $ENCODING, but the app expects UTF8." >&2
+        echo "Drop it (this deletes its data), then run this script again:" >&2
+        echo "    sudo -u postgres psql -c \"DROP DATABASE $DB_NAME WITH (FORCE);\"" >&2
+        exit 1
+    fi
+    echo "==> Database '$DB_NAME' already exists (UTF8)"
 else
-    echo "==> Creating database '$DB_NAME'"
-    (cd / && sudo -u postgres createdb "$DB_NAME")
+    # Spelled out because the server's default can be SQL_ASCII when the container had no language set.
+    # template0 is the blank template, the only one a new database can change its encoding from.
+    echo "==> Creating database '$DB_NAME' (UTF8)"
+    (cd / && sudo -u postgres createdb --encoding=UTF8 --locale=C.UTF-8 --template=template0 "$DB_NAME")
 fi
 
 if [ "$(pg -d "$DB_NAME" -tAc "SELECT to_regclass('public.$TABLE') IS NOT NULL")" = "t" ]; then

@@ -129,6 +129,10 @@ Creates the `railway` database and the `services` table (from [schema/services.s
 if they don't exist yet, then loads the data. It takes several minutes; run it inside `tmux` so a dropped
 SSH connection doesn't stop it.
 
+The database is created with **UTF8** encoding. Without it, PostgreSQL may fall back to `SQL_ASCII`
+("no encoding") on a container with no language set, and the webapp would then receive text as raw
+bytes. If an existing `railway` database isn't UTF8, the script stops and prints how to drop it.
+
 ```bash
 bash scripts/load-data.sh
 ```
@@ -301,7 +305,8 @@ sudo -u postgres psql -d railway -c "GRANT SELECT, INSERT, UPDATE, DELETE ON ser
 ### 2. Copy the fragment (server 1 and server 2)
 
 Run inside `tmux`. It asks for your `sudo` password and for `app`'s password, then creates the
-`railway` database and `services` table if needed and copies the rows.
+`railway` database (UTF8, as in [Load it into PostgreSQL](#2-load-it-into-postgresql)) and `services`
+table if needed and copies the rows.
 
 On server 1:
 
