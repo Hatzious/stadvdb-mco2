@@ -1,7 +1,7 @@
 """Access layer, reads: decides which server answers, so the pages never have to.
 
     get_row(settings, stop_rdt_id)      one row: this server first, then server 0, then the other fragment
-    list_rows(settings, filters, ...)   a page of 20, in stop_rdt_id order, with Next / Previous
+    list_rows(settings, filters, sort)  a page of 20 by ID, arrival time or delay, with Next / Previous
     jump_to_page(settings, filters, n)  a typed page number (needs one server holding every matching row)
 
 Every result says which server(s) answered. The Records page ignores that (data transparency);
@@ -59,6 +59,29 @@ class Filters:
     stop_rdt_id: int | None = None
     service_type: str | None = None  # exact match, so the owning fragment is always known
     service_company: str | None = None  # ignores upper/lower case: "ns" also finds "NS"
+
+
+ID_COLUMN = "stop_rdt_id"
+SORT_COLUMNS = (ID_COLUMN, "stop_arrival_time", "stop_arrival_delay")
+
+
+@dataclass(frozen=True)
+class Sort:
+    """The order rows are listed in. Sorting by time or delay uses the indexes in
+    schema/services_indexes.sql and leaves out rows without a value in that column."""
+
+    column: str = ID_COLUMN  # one of SORT_COLUMNS
+    descending: bool = False
+
+    def __post_init__(self) -> None:
+        if self.column not in SORT_COLUMNS:  # the name goes into the SQL text, so only allow known ones
+            raise ValueError(f"Can't sort by {self.column!r}. Use one of {SORT_COLUMNS}.")
+
+    def key(self, row: Service) -> tuple:
+        """Where a row sits in this order: (value, ID), or just (ID,) when sorting by ID."""
+        if self.column == ID_COLUMN:
+            return (row.stop_rdt_id,)
+        return (getattr(row, self.column), row.stop_rdt_id)
 
 
 @dataclass(frozen=True)
@@ -172,14 +195,19 @@ def _select_page(
     settings: Settings,
     server_id: int,
     filters: Filters,
-    after: int | None,
-    before: int | None,
+    sort: Sort,
+    after: tuple | None,
+    before: tuple | None,
     offset: int,
     limit: int,
     isolation: str,
     on_event: db.EventHandler | None,
 ) -> list[Service]:
-    """Run one SELECT on one server. Rows come back ascending, or descending when `before` is set."""
+    """Run one SELECT on one server.
+
+    Rows come back in `sort` order, or in reverse when `before` is set (paging backwards).
+    `after` / `before` are sort keys (see Sort.key) of the row the page continues from.
+    """
     clauses: list[str] = []
     params: list[object] = []
     if filters.stop_rdt_id is not None:
@@ -191,17 +219,29 @@ def _select_page(
     if filters.service_company is not None:
         clauses.append("lower(service_company) = lower(%s)")
         params.append(filters.service_company)
-    if after is not None:
-        clauses.append("stop_rdt_id > %s")  # keyset paging: start right after the last row shown
-        params.append(after)
-    if before is not None:
-        clauses.append("stop_rdt_id < %s")
-        params.append(before)
+    if sort.column != ID_COLUMN:
+        # Sorted views only list rows that have a value (and that's what the partial index holds).
+        clauses.append(f"{sort.column} IS NOT NULL")
+
+    backwards = before is not None
+    descending = sort.descending != backwards  # paging backwards flips the direction
+    key = after if after is not None else before
+    if key is not None:
+        # Keyset paging: continue right after (or before) the row we left off at, in sort order.
+        # (delay, id) > (5, 49227490) compares delay first and uses the id only to break ties.
+        compare = "<" if descending else ">"
+        if sort.column == ID_COLUMN:
+            clauses.append(f"stop_rdt_id {compare} %s")
+        else:
+            clauses.append(f"({sort.column}, stop_rdt_id) {compare} (%s, %s)")
+        params += list(key)
 
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
-    direction = "DESC" if before is not None else "ASC"
-    # Only fixed words go into the SQL text itself; every value travels separately as a parameter.
-    sql = f"SELECT {_COLUMNS} FROM services{where} ORDER BY stop_rdt_id {direction} LIMIT %s OFFSET %s"
+    direction = "DESC" if descending else "ASC"
+    order = f"{sort.column} {direction}" + ("" if sort.column == ID_COLUMN else f", stop_rdt_id {direction}")
+    # Only fixed words go into the SQL text itself (sort.column is checked against SORT_COLUMNS);
+    # every value travels separately as a parameter.
+    sql = f"SELECT {_COLUMNS} FROM services{where} ORDER BY {order} LIMIT %s OFFSET %s"
     params += [limit, offset]
 
     with db.transaction(settings, server_id, isolation, on_event) as cur:
@@ -221,7 +261,7 @@ def read_on(
 
     Raises ServerDown if that server can't be reached.
     """
-    rows = _query(settings, server_id, Filters(stop_rdt_id=stop_rdt_id), None, None, 0, 1, isolation, on_event)
+    rows = _query(settings, server_id, Filters(stop_rdt_id=stop_rdt_id), Sort(), None, None, 0, 1, isolation, on_event)
     return rows[0] if rows else None
 
 
@@ -249,10 +289,11 @@ def _complete_sources(filters: Filters) -> list[tuple[int, ...]]:
 def _fetch(
     settings: Settings,
     filters: Filters,
+    sort: Sort,
     sources: list[tuple[int, ...]],
     *,
-    after: int | None,
-    before: int | None,
+    after: tuple | None,
+    before: tuple | None,
     offset: int,
     limit: int,
     isolation: str,
@@ -264,7 +305,7 @@ def _fetch(
         if not all(usable(settings, server_id) for server_id in group):
             unavailable.update(s for s in group if not usable(settings, s))
             continue
-        args = (filters, after, before, offset, limit, isolation, on_event)
+        args = (filters, sort, after, before, offset, limit, isolation, on_event)
         try:
             if len(group) == 1:
                 return _query(settings, group[0], *args), group
@@ -275,7 +316,9 @@ def _fetch(
         except db.ServerDown as error:
             unavailable.add(error.server_id)
             continue
-        merged = heapq.merge(*results, key=lambda row: row.stop_rdt_id, reverse=before is not None)
+        # Both lists are already in the same order, so merging them keeps that order.
+        descending = sort.descending != (before is not None)
+        merged = heapq.merge(*results, key=sort.key, reverse=descending)
         return list(itertools.islice(merged, limit)), group
 
     names = ", ".join(f"server {s}" for s in sorted(unavailable))
@@ -307,7 +350,7 @@ def get_row(
             unavailable.add(server_id)
             continue
         try:
-            rows = _query(settings, server_id, by_id, None, None, 0, 1, isolation, on_event)
+            rows = _query(settings, server_id, by_id, Sort(), None, None, 0, 1, isolation, on_event)
         except db.ServerDown:
             unavailable.add(server_id)
             continue
@@ -324,24 +367,26 @@ def get_row(
 def list_rows(
     settings: Settings,
     filters: Filters = Filters(),
+    sort: Sort = Sort(),
     *,
-    after: int | None = None,
-    before: int | None = None,
+    after: Service | None = None,
+    before: Service | None = None,
     isolation: str = db.DEFAULT_ISOLATION,
     on_event: db.EventHandler | None = None,
 ) -> Page:
-    """A page of rows in stop_rdt_id order.
+    """A page of rows in `sort` order.
 
-    First page: no after/before.  Next: after = last ID shown.  Previous: before = first ID shown.
+    First page: no after/before.  Next: after = the last row shown.  Previous: before = the first row shown.
     """
     if after is not None and before is not None:
         raise ValueError("Give after or before, not both.")
     rows, served_by = _fetch(
         settings,
         filters,
+        sort,
         _complete_sources(filters),
-        after=after,
-        before=before,
+        after=sort.key(after) if after is not None else None,
+        before=sort.key(before) if before is not None else None,
         offset=0,
         limit=PAGE_SIZE + 1,  # one extra row says whether there's another page beyond this one
         isolation=isolation,
@@ -364,12 +409,13 @@ def jump_to_page(
     settings: Settings,
     filters: Filters,
     page_number: int,
+    sort: Sort = Sort(),
     isolation: str = db.DEFAULT_ISOLATION,
     on_event: db.EventHandler | None = None,
 ) -> Page:
     """Page N (from 1) via OFFSET: one server skips the rows before it. Deep pages take a few seconds.
 
-    Never merges fragments (each would have to send every ID up to that page), so it raises
+    Never merges fragments (each would have to send every row up to that page), so it raises
     Unavailable when no single server holds every matching row: usually, when server 0 is down.
     After a jump, continue with list_rows(after=...) / list_rows(before=...).
     """
@@ -380,6 +426,7 @@ def jump_to_page(
         rows, served_by = _fetch(
             settings,
             filters,
+            sort,
             single_servers,
             after=None,
             before=None,
@@ -393,3 +440,33 @@ def jump_to_page(
             "Jumping to a page number needs server 0, which is unavailable right now. Use Next / Previous instead."
         ) from error
     return Page(rows[:PAGE_SIZE], has_previous=page_number > 1, has_next=len(rows) > PAGE_SIZE, served_by=served_by)
+
+
+def value_lists(settings: Settings, on_event: db.EventHandler | None = None) -> tuple[list[str], list[str]]:
+    """The service types and companies that exist, for the dropdowns.
+
+    One pass over the table (a few seconds on server 0), so the pages cache the answer. Companies that
+    differ only in upper/lower case ("NS", "ns") are listed once, since the company filter ignores case.
+    With server 0 down, both fragments are asked and their answers combined.
+    """
+    sql = "SELECT service_type, min(service_company) FROM services GROUP BY service_type, lower(service_company)"
+    for group in ((CENTRAL,), (SPRINTER_SERVER, OTHERS_SERVER)):
+        if not all(usable(settings, s) for s in group):
+            continue
+        try:
+            pairs: list[tuple] = []
+            for server_id in group:
+                with db.transaction(settings, server_id, on_event=on_event) as cur:
+                    cur.execute(sql)
+                    pairs += cur.fetchall()
+                mark_up(server_id)
+        except db.ServerDown as error:
+            mark_down(error.server_id)
+            continue
+        types = sorted({service_type for service_type, _ in pairs if service_type is not None})
+        companies: dict[str, str] = {}  # lower case -> how it's shown
+        for _, company in pairs:
+            if company is not None:
+                companies[company.lower()] = min(companies.get(company.lower(), company), company)
+        return types, sorted(companies.values(), key=str.lower)
+    raise Unavailable("The lists of types and companies can't be loaded right now.")

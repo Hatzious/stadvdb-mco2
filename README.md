@@ -37,6 +37,7 @@ Some changes need one extra step on each server:
 | `scripts/setup-node.sh` | `sudo bash scripts/setup-node.sh` |
 | `schema/services.sql` | See [When schema/services.sql changes](#when-schemaservicessql-changes) |
 | `schema/replication_log.sql` | See [The replication log](#the-replication-log) |
+| `schema/services_indexes.sql` | See [Sort indexes](#sort-indexes) |
 
 ## Node setup
 
@@ -381,6 +382,31 @@ Add `--yes` to skip the question. **Warning:** a `pending` entry is a write anot
 received yet. Deleting it means that server never gets it, and the row stays different between the
 two servers. The script warns you when pending entries exist.
 
+## Sort indexes
+
+The Records page can sort by arrival time and by delay. To make that fast, each server keeps two
+indexes ([schema/services_indexes.sql](schema/services_indexes.sql)). The load scripts build them at the
+end of a load. On a server loaded before they existed, build them once (a few minutes on server 0;
+the server keeps working meanwhile):
+
+```bash
+cd ~/stadvdb-mco2
+sudo -u postgres psql -d railway < schema/services_indexes.sql
+```
+
+Check they're there (`services_by_arrival_time` and `services_by_arrival_delay`, under "Indexes"):
+
+```bash
+sudo -u postgres psql -d railway -c "\d services"
+```
+
+If a build was interrupted, `\d services` marks that index `INVALID`. Drop it and run the file again:
+
+```bash
+sudo -u postgres psql -d railway -c "DROP INDEX services_by_arrival_time;"   # or services_by_arrival_delay
+sudo -u postgres psql -d railway < schema/services_indexes.sql
+```
+
 ## Python environment
 
 The webapp's packages are listed in [pyproject.toml](pyproject.toml), with exact versions locked in
@@ -441,12 +467,17 @@ the servers. Test with demo rows, and tell your groupmates before running anythi
 
 ## Running the webapp
 
-The webapp's code lives in the [app/](app) folder. The entry file is [app/app.py](app/app.py);
+The webapp's code lives in the [app/](app) folder. The entry file is [app/app.py](app/app.py): it holds
+the sidebar (the **isolation level** every page uses) and the page menu. The pages are in
+[app/views/](app/views):
+
+| Page | What it does |
+|---|---|
+| **Records** | Browse, filter, sort, edit, delete and add records. Never shows which server answered. |
+| **Connection check** | Which server this copy of the app is, whether it reaches all three databases, and the replication state with a **Replay now** button. If `secrets.toml` is missing or wrong, it says what to fix. |
+
 [app/settings.py](app/settings.py) reads this machine's `.streamlit/secrets.toml`. Shared Streamlit
 settings are in [.streamlit/config.toml](.streamlit/config.toml).
-
-Right now the page is a **connection check**: it shows which server this copy of the app acts as, and
-whether it can reach all three databases. If `secrets.toml` is missing or wrong, it says what to fix.
 
 ### On a laptop (development)
 

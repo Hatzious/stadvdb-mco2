@@ -21,6 +21,7 @@ FIELDS="stop_rdt_id, service_type, service_company, stop_arrival_time, stop_arri
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 SCHEMA_FILE="$REPO_DIR/schema/services.sql"
+INDEX_FILE="$REPO_DIR/schema/services_indexes.sql"  # sort indexes, built after the bulk load
 
 # The fragmentation rule. IS DISTINCT FROM also catches rows with an empty type,
 # so every row of server 0 lands in exactly one fragment.
@@ -121,6 +122,9 @@ fi
 
 echo "==> Refreshing table statistics"
 pg -d "$DB_NAME" -c "ANALYZE $TABLE;"
+
+echo "==> Building the sort indexes (schema/services_indexes.sql; a few minutes)"
+pg -d "$DB_NAME" < "$INDEX_FILE"
 
 echo "==> Done. Server 0: $SOURCE_ROWS rows, this server: $LOCAL_ROWS rows. They match."
 pg -d "$DB_NAME" -c "

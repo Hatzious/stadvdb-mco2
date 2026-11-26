@@ -19,6 +19,7 @@ TABLE="services"
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 SCHEMA_FILE="$REPO_DIR/schema/services.sql"
+INDEX_FILE="$REPO_DIR/schema/services_indexes.sql"  # sort indexes, built after the bulk load
 INCOMING_FILE="$REPO_DIR/schema/incoming.sql"
 URL="$(head -n 1 "$REPO_DIR/source.txt" | tr -d '[:space:]')"
 FILE="$REPO_DIR/data/$(basename "$URL")"
@@ -103,6 +104,9 @@ echo "==> Rows before: $ROWS_BEFORE   rows after: $ROWS_AFTER   added: $((ROWS_A
 
 echo "==> Refreshing table statistics"
 pg -d "$DB_NAME" -c "ANALYZE $TABLE;"
+
+echo "==> Building the sort indexes (schema/services_indexes.sql; a few minutes)"
+pg -d "$DB_NAME" < "$INDEX_FILE"
 
 echo "==> Done. Summary:"
 pg -d "$DB_NAME" -c "
