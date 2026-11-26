@@ -1,0 +1,19 @@
+# systemd service: the replay loop (app/replay_worker.py), which delivers this server's replication log
+# to the other servers every few seconds. Runs separately from the webapp so it works even when nobody
+# has a page open. Installed by scripts/deploy-app.sh, which fills in __USER__ and __REPO_DIR__.
+
+[Unit]
+Description=STADVDB MCO2 replication replay
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+User=__USER__
+WorkingDirectory=__REPO_DIR__
+# -u: print each line straight away, so the service log is up to date.
+ExecStart=__REPO_DIR__/.venv/bin/python -u app/replay_worker.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

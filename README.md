@@ -26,9 +26,9 @@ sudo bash scripts/deploy-app.sh
 
 - `git pull` fetches the new code.
 - `uv sync` installs any package changes from `uv.lock`. Harmless when nothing changed, so always run it.
-- `sudo bash scripts/deploy-app.sh` reinstalls the server config from `deploy/`, restarts the webapp so it
-  runs the new code, and checks that Streamlit and nginx both answer. If a check fails, the update is
-  broken on that server: fix it before moving on.
+- `sudo bash scripts/deploy-app.sh` reinstalls the server config from `deploy/`, restarts the webapp and
+  the replay service so they run the new code, and checks that Streamlit, nginx and the replay service
+  all work. If a check fails, the update is broken on that server: fix it before moving on.
 
 Some changes need one extra step on each server:
 
@@ -477,9 +477,10 @@ uv sync
 sudo bash scripts/deploy-app.sh
 ```
 
-The script installs the service ([deploy/stadvdb-app.service](deploy/stadvdb-app.service)) and the nginx
-site ([deploy/nginx-stadvdb.conf](deploy/nginx-stadvdb.conf)), removes nginx's default "Welcome" page,
-and checks that Streamlit and nginx both answer. Running it again redeploys. Then open:
+The script installs two services, the webapp ([deploy/stadvdb-app.service](deploy/stadvdb-app.service))
+and the replay service ([deploy/stadvdb-replay.service](deploy/stadvdb-replay.service)), plus the nginx
+site ([deploy/nginx-stadvdb.conf](deploy/nginx-stadvdb.conf)). It removes nginx's default "Welcome" page
+and checks that Streamlit, nginx and the replay service all work. Running it again redeploys. Then open:
 
 | Server | URL |
 |---|---|
@@ -492,7 +493,19 @@ Useful commands on a server:
 ```bash
 sudo journalctl -u stadvdb-app -f       # app log, live (Ctrl+C to stop watching)
 sudo systemctl status stadvdb-app       # is it running?
+sudo journalctl -u stadvdb-replay -f    # replay log, live: what was delivered, and what's waiting
 ```
+
+### The replay service
+
+`stadvdb-replay` runs [app/replay_worker.py](app/replay_worker.py). Every 40 seconds it delivers this
+server's `replication_log` to the other two servers, so a server that was down catches up shortly after
+it comes back, even if nobody has a page open. It only writes to its log when something happened. The
+connection check page also has a **Replay now** button that delivers every log at once.
+
+The interval is `REPLAY_INTERVAL_SECONDS` in [app/replication.py](app/replication.py). To change it,
+edit it on a laptop and follow the [Workflow](#workflow-when-the-repo-changes): the deploy script
+restarts the service with the new value.
 
 ### Restarting the app
 
@@ -519,6 +532,8 @@ Other controls:
 | `sudo systemctl disable --now stadvdb-app` | Turn it off and keep it off after reboots |
 | `sudo systemctl enable --now stadvdb-app` | Undo `disable`: on now and at every boot |
 | `sudo systemctl status stadvdb-app` | Is it running? Shows the last few log lines too |
+
+The same commands work for the replay service: replace `stadvdb-app` with `stadvdb-replay`.
 
 ## Development access (SSH tunnel)
 

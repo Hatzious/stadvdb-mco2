@@ -105,12 +105,60 @@ def recently_down(server_id: int) -> bool:
         return time.monotonic() < _down_until.get(server_id, 0.0)
 
 
-def is_ready(settings: Settings, server_id: int) -> bool:
-    """False while a server is recovering (other servers' logs still hold writes it missed).
+# A server is "recovering" while another server's log holds writes it missed. Entries younger than this
+# don't count: in normal operation every entry is pending for a moment between its commit and its
+# delivery, and that moment mustn't make a healthy server look like it's recovering.
+MISSED_AFTER_SECONDS = 5
+# How long a readiness answer is reused before asking the logs again (saves two queries per click).
+READY_CACHE_SECONDS = 5
 
-    Placeholder until step 5 (replay): every reachable server counts as ready for now.
+_ready_until: dict[int, tuple[float, bool]] = {}  # server -> (valid until, ready?)
+_ready_lock = threading.Lock()
+
+
+def _missed_writes_in_log(settings: Settings, holder: int, server_id: int) -> bool:
+    """Whether `holder`'s log has entries for `server_id` that should have been delivered by now."""
+    with db.transaction(settings, holder) as cur:
+        cur.execute(
+            "SELECT EXISTS (SELECT 1 FROM replication_log WHERE target = %s AND status = 'pending'"
+            f" AND created_at < now() - interval '{MISSED_AFTER_SECONDS} seconds')",
+            (server_id,),
+        )
+        return cur.fetchone()[0]
+
+
+def is_ready(settings: Settings, server_id: int) -> bool:
+    """False while a server is recovering: another server's log still holds writes it missed.
+
+    A recovering server is skipped for reads and writes, like a down one, until the replay has caught
+    it up. A log that can't be reached can't be checked; it's ignored (one failure at a time).
     """
-    return True
+    now = time.monotonic()
+    with _ready_lock:
+        cached = _ready_until.get(server_id)
+        if cached and now < cached[0]:
+            return cached[1]
+
+    ready = True
+    for holder in settings.servers:
+        if holder == server_id or recently_down(holder):
+            continue
+        try:
+            if _missed_writes_in_log(settings, holder, server_id):
+                ready = False
+                break
+        except db.ServerDown:
+            mark_down(holder)
+
+    with _ready_lock:
+        _ready_until[server_id] = (time.monotonic() + READY_CACHE_SECONDS, ready)
+    return ready
+
+
+def forget_readiness(server_id: int) -> None:
+    """Drop the cached answer, e.g. right after a replay caught the server up."""
+    with _ready_lock:
+        _ready_until.pop(server_id, None)
 
 
 def usable(settings: Settings, server_id: int) -> bool:

@@ -2,7 +2,8 @@
 # Deploys (or redeploys) the webapp on this server:
 #   browser -> gateway HTTP port -> nginx on port 80 -> Streamlit on 127.0.0.1:8501
 # Streamlit runs as a systemd service under your regular user, so it keeps running after you
-# log out and starts again after a reboot. Safe to run again.
+# log out and starts again after a reboot. A second service, stadvdb-replay, delivers this server's
+# replication log in the background. Safe to run again.
 #
 # Usage (on the server, from the repo folder, as your regular user):
 #   git pull && uv sync
@@ -23,7 +24,7 @@ fi
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 SERVICE_NAME="stadvdb-app"
-SERVICE_FILE="/etc/systemd/system/$SERVICE_NAME.service"
+REPLAY_SERVICE="stadvdb-replay"  # delivers this server's replication log every few seconds
 NGINX_SITE="/etc/nginx/sites-available/stadvdb"
 
 if [ ! -x "$REPO_DIR/.venv/bin/streamlit" ]; then
@@ -32,15 +33,23 @@ if [ ! -x "$REPO_DIR/.venv/bin/streamlit" ]; then
     exit 1
 fi
 
-echo "==> Installing the app service ($SERVICE_FILE)"
-# Fill in the placeholders. The last expression strips Windows line endings, just in case.
-sed -e "s|__USER__|$APP_USER|g" \
-    -e "s|__REPO_DIR__|$REPO_DIR|g" \
-    -e 's/\r$//' \
-    "$REPO_DIR/deploy/stadvdb-app.service" > "$SERVICE_FILE"
-systemctl daemon-reload
-systemctl enable "$SERVICE_NAME" > /dev/null 2>&1
-systemctl restart "$SERVICE_NAME"
+# Copy deploy/<name>.service into systemd, start it at boot, and (re)start it now with the new code.
+install_service() {
+    local name="$1"
+    local file="/etc/systemd/system/$name.service"
+    echo "==> Installing the $name service ($file)"
+    # Fill in the placeholders. The last expression strips Windows line endings, just in case.
+    sed -e "s|__USER__|$APP_USER|g" \
+        -e "s|__REPO_DIR__|$REPO_DIR|g" \
+        -e 's/\r$//' \
+        "$REPO_DIR/deploy/$name.service" > "$file"
+    systemctl daemon-reload
+    systemctl enable "$name" > /dev/null 2>&1
+    systemctl restart "$name"
+}
+
+install_service "$SERVICE_NAME"
+install_service "$REPLAY_SERVICE"
 
 echo "==> Installing the nginx site ($NGINX_SITE)"
 sed -e 's/\r$//' "$REPO_DIR/deploy/nginx-stadvdb.conf" > "$NGINX_SITE"
@@ -67,6 +76,16 @@ else
     exit 1
 fi
 
+echo "==> Checking the replay service stays running"
+# It reads its settings at start-up and stops at once if they're wrong, so give it a moment first.
+sleep 3
+if systemctl is-active --quiet "$REPLAY_SERVICE"; then
+    echo "    $REPLAY_SERVICE is running"
+else
+    echo "The replay service isn't running. Its log:  sudo journalctl -u $REPLAY_SERVICE -n 50" >&2
+    exit 1
+fi
+
 # Work out which server this is from its internal address, to print its own public URL.
 GATEWAY="103.231.240.136"
 case " $(hostname -I) " in
@@ -83,5 +102,6 @@ else
     echo "==> Deployed. This server's address isn't one of the three project servers,"
     echo "    so its public URL is unknown. Check the README's server table."
 fi
-echo "    App log (live):  sudo journalctl -u $SERVICE_NAME -f"
-echo "    Restart app:     sudo bash scripts/deploy-app.sh   (restarts with these checks)"
+echo "    App log (live):     sudo journalctl -u $SERVICE_NAME -f"
+echo "    Replay log (live):  sudo journalctl -u $REPLAY_SERVICE -f"
+echo "    Restart both:       sudo bash scripts/deploy-app.sh   (restarts with these checks)"

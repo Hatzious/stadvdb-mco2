@@ -9,9 +9,9 @@ from datetime import datetime, timezone
 
 import streamlit as st
 
-from access import CENTRAL, Unavailable, fragment_for, get_row, list_rows, read_on
+from access import CENTRAL, Unavailable, fragment_for, get_row, is_ready, list_rows, read_on
 from db import Event, Refused, ServerDown, ping_all
-from replication import get_entry
+from replication import REPLAY_INTERVAL_SECONDS, get_entry, log_summaries, replay_all
 from settings import SettingsError, load_settings
 from writes import WriteResult, delete_row, insert_row, update_row
 
@@ -43,6 +43,49 @@ for result in results:
         st.error(f"{label}: NOT reachable after {result.millis} ms. {result.detail}")
 
 st.button("Check again")
+
+# Replication status and the "Replay now" button. Temporary home: they move to the Node monitor page later.
+st.subheader("Replication")
+st.caption(
+    f"The replay service on each server delivers its own log every {REPLAY_INTERVAL_SECONDS} s. "
+    "A server is *recovering* while another server's log holds writes it missed; reads and writes skip it."
+)
+if st.button("Replay now"):
+    with st.spinner("Delivering every log to every server..."):
+        replayed = replay_all(settings)
+    done = [r for r in replayed if r.applied or r.conflicts]
+    for r in done:
+        st.success(f"Server {r.source}'s log -> server {r.target}: applied {len(r.applied)}, conflicts {len(r.conflicts)}")
+    for r in replayed:
+        if r.stopped:
+            st.warning(f"Server {r.source}'s log -> server {r.target}: {r.stopped}")
+    if not done and not any(r.stopped for r in replayed):
+        st.info("Nothing was pending.")
+
+up_servers = {r.server_id for r in results if r.up}
+st.table([
+    {
+        "server": SERVER_NAMES[s],
+        "state": "down" if s not in up_servers else ("ready" if is_ready(settings, s) else "RECOVERING"),
+    }
+    for s in sorted(settings.servers)
+])
+summaries, unreadable = log_summaries(settings)
+if summaries:
+    st.table([
+        {
+            "log on": SERVER_NAMES[x.source],
+            "for": SERVER_NAMES[x.target],
+            "pending": x.pending,
+            "conflicts": x.conflicts,
+            "oldest pending": x.oldest_pending,
+        }
+        for x in summaries
+    ])
+else:
+    st.write("All readable logs are empty.")
+for s in unreadable:
+    st.warning(f"Couldn't read the log on {SERVER_NAMES[s]}.")
 
 # Temporary check of the read routing (access.py) against the real databases, until the Records page exists.
 st.subheader("Sample read")

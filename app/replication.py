@@ -29,8 +29,12 @@ from datetime import datetime
 from psycopg.rows import class_row
 
 import db
-from access import Service, mark_down, mark_up, recently_down
+from access import Service, forget_readiness, mark_down, mark_up, recently_down
 from settings import Settings
+
+# How often the replay service (app/replay_worker.py) delivers each server's log.
+# Changing it: edit, commit, then on each server git pull + sudo bash scripts/deploy-app.sh.
+REPLAY_INTERVAL_SECONDS = 40
 
 DELIVERY_ISOLATION = "READ COMMITTED"
 # Advisory locks are named by two numbers. The first marks "replication delivery" (so no other use of
@@ -216,7 +220,59 @@ def deliver(settings: Settings, source: int, target: int, on_event: db.EventHand
         if isinstance(error, db.ServerDown):
             mark_down(source)
         return DeliveryResult(source, target, stopped=f"server {source} (the log) failed: {error.reason}")
+    if result.stopped is None:
+        forget_readiness(target)  # it may have just caught up: let the next check ask again
     return result
+
+
+def replay_all(settings: Settings, on_event: db.EventHandler | None = None) -> list[DeliveryResult]:
+    """Deliver every log to every other server (the "Replay now" button). Skips servers known to be down."""
+    results = []
+    for source in sorted(settings.servers):
+        for target in sorted(settings.servers):
+            if source == target:
+                continue
+            if recently_down(source):
+                results.append(DeliveryResult(source, target, stopped=f"server {source} (the log) is unreachable"))
+                continue
+            results.append(deliver(settings, source, target, on_event))
+    return results
+
+
+@dataclass(frozen=True)
+class LogSummary:
+    """What one server's log holds for one target."""
+
+    source: int  # the server holding the log
+    target: int
+    pending: int
+    conflicts: int
+    oldest_pending: datetime | None
+
+
+def log_summaries(settings: Settings) -> tuple[list[LogSummary], list[int]]:
+    """Pending and conflicting entries in every reachable log. Also returns the logs that couldn't be read."""
+    summaries, unreachable = [], []
+    for source in sorted(settings.servers):
+        if recently_down(source):
+            unreachable.append(source)
+            continue
+        try:
+            with db.transaction(settings, source) as cur:
+                cur.execute(
+                    "SELECT target,"
+                    " count(*) FILTER (WHERE status = 'pending'),"
+                    " count(*) FILTER (WHERE status = 'conflict'),"
+                    " min(created_at) FILTER (WHERE status = 'pending')"
+                    " FROM replication_log GROUP BY target ORDER BY target"
+                )
+                rows = cur.fetchall()
+        except db.ServerDown:
+            mark_down(source)
+            unreachable.append(source)
+            continue
+        summaries += [LogSummary(source, *row) for row in rows]
+    return summaries, unreachable
 
 
 def get_entry(settings: Settings, server_id: int, entry_id: int) -> LogEntry | None:
