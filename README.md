@@ -4,6 +4,9 @@ A distributed database system running PostgreSQL across 3 Proxmox nodes, built o
 [Dutch railway services dataset](https://duckdb.org/docs/2.0/guides/snippets/dutch_railway_datasets).
 The data source URL is in [source.txt](source.txt).
 
+Building the Simulation page, the Node monitor, or running the test cases? Start with
+[docs/handoff.md](docs/handoff.md): how the system works, the code map, and what to expect in each case.
+
 ## Workflow: when the repo changes
 
 Changes flow one way: **laptop → GitHub → servers**. Edit and commit on a laptop, push, then update
