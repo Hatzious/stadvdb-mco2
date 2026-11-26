@@ -23,6 +23,10 @@ def log(message: str) -> None:
     print(f"{datetime.now():%Y-%m-%d %H:%M:%S}  {message}", flush=True)
 
 
+# Servers a delivery couldn't reach, so a later successful delivery can report them back online.
+_offline: set[int] = set()
+
+
 def replay_once(settings) -> None:
     me = settings.server_id
     for target in sorted(settings.servers):
@@ -30,10 +34,17 @@ def replay_once(settings) -> None:
             continue
         result = deliver(settings, source=me, target=target)
         # Only report when something happened, so an idle log stays quiet.
+        if result.stopped is None:
+            # This delivery reached both its log's server and the target.
+            for server_id in sorted(_offline & {me, target}):
+                _offline.discard(server_id)
+                log(f"server {me} -> server {target}: server {server_id} is back online")
         if result.applied or result.conflicts:
             log(f"server {me} -> server {target}: applied {len(result.applied)}, conflicts {len(result.conflicts)}"
                 + (f" (conflict entries {result.conflicts})" if result.conflicts else ""))
         if result.stopped:
+            if result.unreachable is not None:
+                _offline.add(result.unreachable)
             log(f"server {me} -> server {target}: waiting ({result.stopped})")
 
 

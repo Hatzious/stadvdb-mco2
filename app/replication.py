@@ -95,6 +95,7 @@ class DeliveryResult:
     applied: list[int] = field(default_factory=list)  # entry IDs delivered (or found already there)
     conflicts: list[int] = field(default_factory=list)  # entry IDs the target disagreed with
     stopped: str | None = None  # why delivery stopped early, if it did; the rest stay pending
+    unreachable: int | None = None  # the server that couldn't be reached, if that was the reason
 
     def status_of(self, entry_id: int) -> str:
         if entry_id in self.applied:
@@ -187,6 +188,7 @@ def deliver(settings: Settings, source: int, target: int, on_event: db.EventHand
     result = DeliveryResult(source, target)
     if recently_down(target):
         result.stopped = f"server {target} was unreachable moments ago"
+        result.unreachable = target
         return result
 
     try:
@@ -206,6 +208,7 @@ def deliver(settings: Settings, source: int, target: int, on_event: db.EventHand
                 except db.ServerDown as error:
                     mark_down(target)
                     result.stopped = f"server {target} unreachable: {error.reason}"
+                    result.unreachable = target
                     break
                 except db.Refused as error:  # e.g. a lock on the target row didn't free up in time
                     result.stopped = f"server {target} refused entry #{entry.id}: {error.reason}"
@@ -217,9 +220,11 @@ def deliver(settings: Settings, source: int, target: int, on_event: db.EventHand
     except (db.ServerDown, db.Refused) as error:
         # The source failed before its commit, so none of the marks above were saved: those entries
         # stay pending and are delivered again later (harmlessly, thanks to the fin_ check).
-        if isinstance(error, db.ServerDown):
+        down = isinstance(error, db.ServerDown)
+        if down:
             mark_down(source)
-        return DeliveryResult(source, target, stopped=f"server {source} (the log) failed: {error.reason}")
+        return DeliveryResult(source, target, stopped=f"server {source} (the log) failed: {error.reason}",
+                              unreachable=source if down else None)
     if result.stopped is None:
         forget_readiness(target)  # it may have just caught up: let the next check ask again
     return result
@@ -233,7 +238,8 @@ def replay_all(settings: Settings, on_event: db.EventHandler | None = None) -> l
             if source == target:
                 continue
             if recently_down(source):
-                results.append(DeliveryResult(source, target, stopped=f"server {source} (the log) is unreachable"))
+                results.append(DeliveryResult(source, target, stopped=f"server {source} (the log) is unreachable",
+                                              unreachable=source))
                 continue
             results.append(deliver(settings, source, target, on_event))
     return results
