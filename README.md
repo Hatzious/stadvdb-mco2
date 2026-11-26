@@ -36,6 +36,7 @@ Some changes need one extra step on each server:
 |---|---|
 | `scripts/setup-node.sh` | `sudo bash scripts/setup-node.sh` |
 | `schema/services.sql` | See [When schema/services.sql changes](#when-schemaservicessql-changes) |
+| `schema/replication_log.sql` | See [The replication log](#the-replication-log) |
 
 ## Node setup
 
@@ -331,6 +332,49 @@ sudo -u postgres psql -d railway -c "SELECT count(*) FROM services;"
 ```
 
 Run it on each server: server 1's count plus server 2's count should equal server 0's count.
+
+## The replication log
+
+Every server keeps a `replication_log` table ([schema/replication_log.sql](schema/replication_log.sql)).
+Each write adds an entry for the server holding the row's other copy; the app delivers it and marks
+it `applied`. Entries for a server that is down stay `pending` until it comes back.
+
+### Create it (all three servers)
+
+From the repo folder, on server 0, 1 and 2:
+
+```bash
+cd ~/stadvdb-mco2
+sudo -u postgres psql -d railway < schema/replication_log.sql
+```
+
+Safe to run again: anything that already exists is skipped. Check it's there:
+
+```bash
+sudo -u postgres psql -d railway -c "\d replication_log"
+```
+
+### When schema/replication_log.sql changes
+
+Running the file again does **not** change an existing table. The log only holds replication
+history, so drop it and create it again (this deletes its entries, see the warning below):
+
+```bash
+sudo -u postgres psql -d railway -c "DROP TABLE replication_log;"
+sudo -u postgres psql -d railway < schema/replication_log.sql
+```
+
+### Emptying it
+
+Resets the log between demo runs. It shows how many entries there are and asks you to type `yes`:
+
+```bash
+bash scripts/clear-replication-log.sh
+```
+
+Add `--yes` to skip the question. **Warning:** a `pending` entry is a write another server hasn't
+received yet. Deleting it means that server never gets it, and the row stays different between the
+two servers. The script warns you when pending entries exist.
 
 ## Python environment
 
