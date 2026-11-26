@@ -4,9 +4,11 @@ Entry file of the webapp:  uv run streamlit run app/app.py
 """
 
 import socket
+from dataclasses import asdict
 
 import streamlit as st
 
+from access import Unavailable, list_rows
 from db import ping_all
 from settings import SettingsError, load_settings
 
@@ -38,3 +40,14 @@ for result in results:
         st.error(f"{label}: NOT reachable after {result.millis} ms. {result.detail}")
 
 st.button("Check again")
+
+# Temporary check of the read routing (access.py) against the real databases, until the Records page exists.
+st.subheader("Sample read")
+try:
+    page = list_rows(settings)
+except Unavailable as error:
+    st.error(str(error))
+else:
+    answered = " and ".join(SERVER_NAMES[s] for s in page.served_by)
+    st.write(f"First {len(page.rows)} rows in ID order, answered by **{answered}**.")
+    st.table([asdict(row) for row in page.rows])
