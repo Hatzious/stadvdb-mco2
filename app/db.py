@@ -32,6 +32,10 @@ from settings import Settings
 ISOLATION_LEVELS = ("READ UNCOMMITTED", "READ COMMITTED", "REPEATABLE READ", "SERIALIZABLE")
 DEFAULT_ISOLATION = "READ COMMITTED"  # PostgreSQL's own default
 
+# Longest a transaction waits for a lock (a row another transaction is changing, or the delivery lock)
+# before giving up with "lock not available", which arrives as Refused. Longer than any Simulation pause.
+LOCK_TIMEOUT = "20s"
+
 # Notice a dead server within seconds instead of minutes. A stopped PostgreSQL refuses connections at once,
 # but a powered-off container never answers, and without these the app could hang until the OS gives up.
 _DEAD_SERVER_OPTIONS = {
@@ -97,7 +101,8 @@ class Event:
 EventHandler = Callable[[Event], None]
 
 
-def _emit(on_event: EventHandler | None, server_id: int, step: str, detail: str = "") -> None:
+def emit(on_event: EventHandler | None, server_id: int, step: str, detail: str = "") -> None:
+    """Report one step to on_event, if anyone is listening."""
     if on_event is not None:
         on_event(Event(server_id, step, detail))
 
@@ -132,7 +137,7 @@ def connect(settings: Settings, server_id: int, on_event: EventHandler | None = 
     A wrong password also lands here as ServerDown; its message says so, and the connection check page shows it.
     """
     server = settings.servers[server_id]
-    _emit(on_event, server_id, "connecting", f"{server.host}:{server.port}")
+    emit(on_event, server_id, "connecting", f"{server.host}:{server.port}")
     try:
         conn = psycopg.connect(
             host=server.host,
@@ -151,9 +156,9 @@ def connect(settings: Settings, server_id: int, on_event: EventHandler | None = 
             **_DEAD_SERVER_OPTIONS,
         )
     except psycopg.Error as error:
-        _emit(on_event, server_id, "unreachable", _first_line(error))
+        emit(on_event, server_id, "unreachable", _first_line(error))
         raise ServerDown(server_id, _first_line(error), error.sqlstate) from error
-    _emit(on_event, server_id, "connected")
+    emit(on_event, server_id, "connected")
     return conn
 
 
@@ -178,7 +183,8 @@ def transaction(
     try:
         try:
             conn.execute(f"BEGIN ISOLATION LEVEL {isolation}")  # safe: isolation was checked against the list
-            _emit(on_event, server_id, "begin", isolation)
+            conn.execute(f"SET LOCAL lock_timeout = '{LOCK_TIMEOUT}'")  # LOCAL: only for this transaction
+            emit(on_event, server_id, "begin", isolation)
             with conn.cursor() as cur:
                 yield cur
             # If a query inside the block failed and the error was swallowed, PostgreSQL answers COMMIT
@@ -186,7 +192,7 @@ def transaction(
             if conn.execute("COMMIT").statusmessage != "COMMIT":
                 raise Refused(server_id, "the transaction had an error, so PostgreSQL rolled it back")
             committed = True
-            _emit(on_event, server_id, "committed")
+            emit(on_event, server_id, "committed")
         except psycopg.Error as error:
             problem = classify(server_id, error, conn)
             if problem is None:
@@ -195,7 +201,7 @@ def transaction(
     finally:
         conn.close()
         if not committed:
-            _emit(on_event, server_id, "rolled back")
+            emit(on_event, server_id, "rolled back")
 
 
 @dataclass(frozen=True)

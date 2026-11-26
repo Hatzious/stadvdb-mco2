@@ -90,17 +90,17 @@ _down_until: dict[int, float] = {}
 _down_lock = threading.Lock()  # reads can run in several threads at once
 
 
-def _mark_down(server_id: int) -> None:
+def mark_down(server_id: int) -> None:
     with _down_lock:
         _down_until[server_id] = time.monotonic() + RECENTLY_DOWN_SECONDS
 
 
-def _mark_up(server_id: int) -> None:
+def mark_up(server_id: int) -> None:
     with _down_lock:
         _down_until.pop(server_id, None)
 
 
-def _recently_down(server_id: int) -> bool:
+def recently_down(server_id: int) -> bool:
     with _down_lock:
         return time.monotonic() < _down_until.get(server_id, 0.0)
 
@@ -113,8 +113,8 @@ def is_ready(settings: Settings, server_id: int) -> bool:
     return True
 
 
-def _usable(settings: Settings, server_id: int) -> bool:
-    return not _recently_down(server_id) and is_ready(settings, server_id)
+def usable(settings: Settings, server_id: int) -> bool:
+    return not recently_down(server_id) and is_ready(settings, server_id)
 
 
 # --- Talking to one server ------------------------------------------------------------------------
@@ -162,14 +162,29 @@ def _select_page(
         return cur.fetchall()
 
 
+def read_on(
+    settings: Settings,
+    server_id: int,
+    stop_rdt_id: int,
+    isolation: str = db.DEFAULT_ISOLATION,
+    on_event: db.EventHandler | None = None,
+) -> Service | None:
+    """Read one row from one specific server, with no routing. For checks that compare copies.
+
+    Raises ServerDown if that server can't be reached.
+    """
+    rows = _query(settings, server_id, Filters(stop_rdt_id=stop_rdt_id), None, None, 0, 1, isolation, on_event)
+    return rows[0] if rows else None
+
+
 def _query(settings: Settings, server_id: int, *args: object) -> list[Service]:
     """_select_page, remembering whether the server answered."""
     try:
         rows = _select_page(settings, server_id, *args)
     except db.ServerDown:
-        _mark_down(server_id)
+        mark_down(server_id)
         raise
-    _mark_up(server_id)
+    mark_up(server_id)
     return rows
 
 
@@ -198,8 +213,8 @@ def _fetch(
     """Ask the first usable group of servers; merge when it's more than one server."""
     unavailable: set[int] = set()
     for group in sources:
-        if not all(_usable(settings, server_id) for server_id in group):
-            unavailable.update(s for s in group if not _usable(settings, s))
+        if not all(usable(settings, server_id) for server_id in group):
+            unavailable.update(s for s in group if not usable(settings, s))
             continue
         args = (filters, after, before, offset, limit, isolation, on_event)
         try:
@@ -240,7 +255,7 @@ def get_row(
     said_no: set[int] = set()
     unavailable: set[int] = set()
     for server_id in order:
-        if not _usable(settings, server_id):
+        if not usable(settings, server_id):
             unavailable.add(server_id)
             continue
         try:
@@ -294,7 +309,7 @@ def list_rows(
 
 def can_jump(settings: Settings, filters: Filters = Filters()) -> bool:
     """Whether a typed page number can work now: it needs one server holding every matching row."""
-    return any(len(group) == 1 and _usable(settings, group[0]) for group in _complete_sources(filters))
+    return any(len(group) == 1 and usable(settings, group[0]) for group in _complete_sources(filters))
 
 
 def jump_to_page(
