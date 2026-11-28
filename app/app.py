@@ -30,6 +30,7 @@ with st.sidebar:
 
 page = st.navigation([
     st.Page("views/records.py", title="Records", icon="📋", default=True),
+    st.Page("views/simulation.py", title="Simulation", icon="🧪"),
     st.Page("views/connection_check.py", title="Connection check", icon="🔌"),
 ])
 page.run()
